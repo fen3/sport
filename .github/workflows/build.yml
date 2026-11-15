@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             artifact_name: countdown-linux-x86_64
             binary_path: countdown/target/release/countdown
           - os: ubuntu-24.04-arm
