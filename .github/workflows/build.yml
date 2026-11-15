@@ -19,6 +19,9 @@ jobs:
           - os: ubuntu-latest
             artifact_name: countdown-linux-x86_64
             binary_path: countdown/target/release/countdown
+          - os: ubuntu-24.04-arm
+            artifact_name: countdown-linux-arm64
+            binary_path: countdown/target/release/countdown
           - os: windows-latest
             artifact_name: countdown-windows-x86_64
             binary_path: countdown/target/release/countdown.exe
