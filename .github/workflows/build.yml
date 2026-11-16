@@ -33,6 +33,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Install base tools (curl, build-essential)
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates build-essential pkg-config file git
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
