@@ -100,11 +100,19 @@ jobs:
         working-directory: app
         run: cargo build --release --locked
 
+      - name: Prepare uniquely named asset
+        shell: bash
+        run: |
+          mkdir -p dist
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          cp "${{ matrix.binary_path }}" "dist/${{ matrix.artifact_name }}${ext}"
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_path }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -126,7 +134,7 @@ jobs:
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: release-assets/**
+          files: release-assets/**/*
 ```
 
 ## Notes on the config
@@ -140,6 +148,11 @@ jobs:
   `Cargo.toml`, otherwise caching silently misses.
 - `ubuntu-24.04-arm` is free for public repos. Private repos require a plan that
   includes ARM runners; check before promising it.
+- **Rename binaries before upload.** All four jobs produce a file literally named
+  `countdown` / `countdown.exe`; `download-artifact` keeps them in separate
+  folders but the Release upload keys on basename, so three of four silently
+  overwrite each other and only 2 assets appear. Copy to
+  `dist/<artifact_name>[.exe]` and upload that. Use `files: release-assets/**/*`.
 
 ## Verification before handing off
 
