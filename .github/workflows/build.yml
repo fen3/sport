@@ -17,7 +17,8 @@ jobs:
     name: ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
     container:
-      image: ubuntu:20.04
+      # rust:1-slim-focal = Ubuntu 20.04 (GLIBC 2.31) + preinstalled Rust stable + curl
+      image: rust:1-slim-focal
     strategy:
       fail-fast: false
       matrix:
@@ -33,13 +34,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install base tools (curl, build-essential)
-        run: |
-          apt-get update
-          apt-get install -y curl ca-certificates build-essential pkg-config file git
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Verify Rust toolchain
+        run: rustc --version && cargo --version
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -49,7 +45,8 @@ jobs:
       - name: Install Linux graphics dependencies
         run: |
           apt-get update
-          apt-get install -y \
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
             libxkbcommon-dev libwayland-dev libx11-dev \
             libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
