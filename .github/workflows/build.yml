@@ -58,11 +58,19 @@ jobs:
         working-directory: countdown
         run: cargo build --release --locked
 
+      - name: Prepare uniquely named asset
+        shell: bash
+        run: |
+          mkdir -p dist
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then ext=".exe"; fi
+          cp "${{ matrix.binary_path }}" "dist/${{ matrix.artifact_name }}${ext}"
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_path }}
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -84,4 +92,4 @@ jobs:
           name: ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: release-assets/**
+          files: release-assets/**/*
