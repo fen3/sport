@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use eframe::egui;
 use std::time::{Duration, Instant};
 
@@ -96,49 +98,47 @@ impl eframe::App for CountdownApp {
         self.tick();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(24.0);
+            let big = egui::FontId::monospace(60.0);
+            let sep = egui::RichText::new(":").font(big.clone());
 
-                let big = egui::FontId::monospace(60.0);
-                let sep = egui::RichText::new(":").font(big.clone());
+            ui.horizontal_centered(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.mins_input)
+                        .font(big.clone())
+                        .desired_width(110.0),
+                );
 
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.mins_input)
-                            .font(big.clone())
-                            .desired_width(110.0),
-                    );
+                ui.add_space(2.0);
+                ui.label(sep);
+                ui.add_space(2.0);
 
-                    ui.add_space(2.0);
-                    ui.label(sep);
-                    ui.add_space(2.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.secs_input)
+                        .font(big.clone())
+                        .desired_width(110.0),
+                );
 
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.secs_input)
-                            .font(big.clone())
-                            .desired_width(110.0),
-                    );
+                ui.add_space(20.0);
 
-                    ui.add_space(20.0);
+                let btn_label = if self.running { "Stop" } else { "Start" };
+                if ui
+                    .add(egui::Button::new(btn_label).min_size(egui::vec2(92.0, 56.0)))
+                    .clicked()
+                {
+                    self.toggle_running();
+                }
+            });
 
-                    let btn_label = if self.running { "Stop" } else { "Start" };
-                    if ui
-                        .add(egui::Button::new(btn_label).min_size(egui::vec2(92.0, 56.0)))
-                        .clicked()
-                    {
-                        self.toggle_running();
-                    }
-                });
-
-                if self.remaining.is_zero() && !self.running {
-                    ui.add_space(16.0);
+            if self.remaining.is_zero() && !self.running {
+                ui.add_space(10.0);
+                ui.horizontal_centered(|ui| {
                     ui.label(
                         egui::RichText::new("TIME'S UP!")
                             .size(22.0)
                             .color(egui::Color32::from_rgb(220, 80, 80)),
                     );
-                }
-            });
+                });
+            }
         });
 
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -148,7 +148,7 @@ impl eframe::App for CountdownApp {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 210.0])
+            .with_inner_size([440.0, 160.0])
             .with_resizable(false),
         ..Default::default()
     };
