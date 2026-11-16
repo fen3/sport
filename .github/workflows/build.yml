@@ -17,8 +17,8 @@ jobs:
     name: ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.os }}
     container:
-      # rust:1-slim-focal = Ubuntu 20.04 (GLIBC 2.31) + preinstalled Rust stable + curl
-      image: rust:1-slim-focal
+      # ubuntu:20.04 = GLIBC 2.31. EOL but image still available on Docker Hub.
+      image: ubuntu:20.04
     strategy:
       fail-fast: false
       matrix:
@@ -34,26 +34,33 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Verify Rust toolchain
-        run: rustc --version && cargo --version
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: countdown
-
-      - name: Install Linux graphics dependencies
+      - name: Install apt dependencies + rustup
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
+          apt-get update -o Acquire::ForceIPv4=true
           apt-get install -y --no-install-recommends \
-            build-essential pkg-config \
+            curl ca-certificates build-essential pkg-config file git \
             libxkbcommon-dev libwayland-dev libx11-dev \
             libxcursor-dev libxi-dev libxrandr-dev libgl1-mesa-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Rust toolchain
+        run: rustc --version && cargo --version
 
       - name: Build release executable
         working-directory: countdown
         run: cargo build --release --locked
+
+      - name: Show GLIBC requirement
+        run: |
+          echo "--- binary GLIBC symbol requirements ---"
+          objdump -T countdown/target/release/countdown 2>/dev/null \
+            | grep -oE 'GLIBC_[0-9.]+' | sort -Vu
+          echo "--- distro ---"
+          ldd --version | head -1
 
       - name: Prepare uniquely named asset
         shell: bash
