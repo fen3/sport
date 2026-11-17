@@ -180,8 +180,8 @@ struct CountdownApp {
     last_update: Option<Instant>,
     fonts_installed: bool,
     menu_open: bool,
-    menu_pos: egui::Pos2,
-    menu_rect: Option<egui::Rect>,
+    menu_screen_pos: Option<egui::Pos2>,
+    menu_btn_rect: Option<egui::Rect>,
 }
 
 impl Default for CountdownApp {
@@ -194,8 +194,8 @@ impl Default for CountdownApp {
             last_update: None,
             fonts_installed: false,
             menu_open: false,
-            menu_pos: egui::pos2(0.0, 0.0),
-            menu_rect: None,
+            menu_screen_pos: None,
+            menu_btn_rect: None,
         }
     }
 }
@@ -268,22 +268,103 @@ impl CountdownApp {
 
     fn close_menu(&mut self) {
         self.menu_open = false;
-        self.menu_rect = None;
     }
 
     fn maybe_close_menu_by_click(&mut self, ctx: &egui::Context) {
         if !self.menu_open {
             return;
         }
-        let clicked = ctx.input(|i| i.pointer.primary_clicked());
-        let inside_menu = self
-            .menu_rect
-            .map(|r| r.contains(ctx.input(|i| i.pointer.interact_pos().unwrap_or_default())))
-            .unwrap_or(false);
-        if clicked && !inside_menu {
-            self.close_menu();
-        }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.close_menu();
+            return;
+        }
+        if !ctx.input(|i| i.pointer.primary_clicked()) {
+            return;
+        }
+        let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) else {
+            return;
+        };
+        // Clicks on the toggle button are handled by the button itself.
+        if self.menu_btn_rect.is_some_and(|r| r.contains(pos)) {
+            return;
+        }
+        self.close_menu();
+    }
+
+    /// The menu is its own OS window (immediate viewport), so it can be drawn
+    /// outside the Countdown window, like a real context menu.
+    fn show_menu_popup(&mut self, ctx: &egui::Context) {
+        if !self.menu_open {
+            return;
+        }
+
+        let items = load_menu();
+        let row_h = 28.0;
+        let pad = 8.0;
+        let width = 220.0;
+        let height = (items.len().max(1) as f32) * row_h + pad * 2.0;
+
+        let mut builder = egui::ViewportBuilder::default()
+            .with_decorations(false)
+            .with_always_on_top()
+            .with_resizable(false)
+            .with_inner_size([width, height]);
+        if let Some(pos) = self.menu_screen_pos {
+            builder = builder.with_position(pos);
+        }
+
+        let mut close = false;
+        let local_pos = self
+            .menu_btn_rect
+            .map(|r| r.left_bottom() + egui::vec2(0.0, 2.0))
+            .unwrap_or(egui::pos2(8.0, 8.0));
+
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("countdown_menu"),
+            builder,
+            |menu_ctx, class| {
+                let draw_items = |ui: &mut egui::Ui| {
+                    if items.is_empty() {
+                        ui.label(format!("(no {MENU_FILE})"));
+                        return;
+                    }
+                    for item in &items {
+                        let resp = ui.add_sized(
+                            egui::vec2(ui.available_width(), row_h - 4.0),
+                            egui::Button::new(&item.title).frame(false),
+                        );
+                        if resp.clicked() {
+                            ui.ctx().copy_text(item.body.clone());
+                            close = true;
+                        }
+                    }
+                };
+
+                let popup_frame = egui::Frame::popup(&menu_ctx.style());
+                match class {
+                    // Backend without multi-viewport support: draw inline.
+                    egui::ViewportClass::Embedded => {
+                        egui::Area::new(egui::Id::new("countdown_menu_area"))
+                            .fixed_pos(local_pos)
+                            .order(egui::Order::Foreground)
+                            .show(menu_ctx, |ui| {
+                                popup_frame.show(ui, draw_items);
+                            });
+                    }
+                    _ => {
+                        egui::CentralPanel::default()
+                            .frame(popup_frame)
+                            .show(menu_ctx, draw_items);
+                    }
+                }
+
+                if menu_ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+            },
+        );
+
+        if close {
             self.close_menu();
         }
     }
@@ -337,23 +418,26 @@ impl eframe::App for CountdownApp {
                         ui.spacing_mut().interact_size.y = 56.0;
                         ui.button("Menu")
                     })
-                    .response;
+                    .inner;
+                self.menu_btn_rect = Some(menu_btn.rect);
                 if menu_btn.clicked() {
                     if self.menu_open {
                         self.close_menu();
                     } else {
-                        // Position menu below the button; flip up if near bottom.
-                        let screen = ctx.screen_rect();
-                        let mut pos =
-                            egui::pos2(menu_btn.rect.left(), menu_btn.rect.bottom() + 2.0);
-                        let estimated_h = 180.0;
-                        if pos.y + estimated_h > screen.bottom() {
-                            pos = egui::pos2(
-                                menu_btn.rect.left(),
-                                menu_btn.rect.top() - estimated_h - 2.0,
-                            );
-                        }
-                        self.menu_pos = pos;
+                        // Translate the button corner into screen coordinates so
+                        // the popup window appears right under the button.
+                        // `inner_rect` is the content rect (no title bar), which
+                        // matches the local coordinates of `menu_btn.rect`.
+                        let origin = ctx
+                            .input(|i| {
+                                i.viewport()
+                                    .inner_rect
+                                    .or(i.viewport().outer_rect)
+                                    .map(|r| r.min)
+                            })
+                            .unwrap_or(egui::Pos2::ZERO);
+                        let local = menu_btn.rect.left_bottom() + egui::vec2(0.0, 2.0);
+                        self.menu_screen_pos = Some(origin + local.to_vec2());
                         self.menu_open = true;
                     }
                 }
@@ -371,48 +455,7 @@ impl eframe::App for CountdownApp {
             }
         });
 
-        // Floating menu rendered AFTER the panel so it sits on top, and via
-        // `egui::Window` so the OS is free to draw it outside the main frame.
-        if self.menu_open {
-            let mut close_after = false;
-            let frame = egui::Frame::window(&ctx.style());
-            let resp = egui::Window::new("__countdown_menu")
-                .title_bar(false)
-                .collapsible(false)
-                .resizable(false)
-                .frame(frame)
-                .fixed_pos(self.menu_pos)
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    let items = load_menu();
-                    if items.is_empty() {
-                        ui.label(format!("(no {MENU_FILE})"));
-                    } else {
-                        for item in &items {
-                            if ui
-                                .add_sized(
-                                    egui::vec2(160.0, 26.0),
-                                    egui::Button::selectable(false, &item.title).frame(false),
-                                )
-                                .clicked()
-                            {
-                                ctx.copy_text(item.body.clone());
-                                close_after = true;
-                            }
-                        }
-                    }
-                });
-
-            if let Some(inner) = resp {
-                self.menu_rect = Some(inner.response.rect);
-            } else {
-                self.menu_rect = None;
-            }
-
-            if close_after {
-                self.close_menu();
-            }
-        }
+        self.show_menu_popup(ctx);
 
         ctx.request_repaint_after(Duration::from_millis(100));
     }
