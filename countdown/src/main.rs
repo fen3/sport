@@ -8,17 +8,21 @@ const DEFAULT_MINS: u64 = 1;
 const DEFAULT_SECS: u64 = 0;
 const MENU_FILE: &str = "menu.txt";
 const MENU_SEPARATOR: &str = "---";
+const CJK_FONT_NAME: &str = "cjk";
 
 struct MenuItem {
     title: String,
     body: String,
 }
 
-fn menu_file_path() -> PathBuf {
-    if let Some(dir) = std::env::current_exe()
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-    {
+}
+
+fn menu_file_path() -> PathBuf {
+    if let Some(dir) = exe_dir() {
         let candidate = dir.join(MENU_FILE);
         if candidate.is_file() {
             return candidate;
@@ -65,12 +69,119 @@ fn parse_menu(text: &str) -> Vec<MenuItem> {
         .collect()
 }
 
+// ---------- CJK font loading ----------
+
+fn try_read_font(path: &std::path::Path) -> Option<Vec<u8>> {
+    std::fs::read(path).ok().filter(|b| !b.is_empty())
+}
+
+fn find_cjk_font() -> Option<Vec<u8>> {
+    // 1) User override: font.ttf / font.otf / font.ttc next to the exe
+    if let Some(dir) = exe_dir() {
+        for ext in ["ttf", "otf", "ttc"] {
+            let p = dir.join(format!("font.{ext}"));
+            if let Some(bytes) = try_read_font(&p) {
+                return Some(bytes);
+            }
+        }
+    }
+
+    // 2) Common system paths, ordered by likelihood
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\msyh.ttf",
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        "C:\\Windows\\Fonts\\simsun.ttc",
+        "C:\\Windows\\Fonts\\SIMSUN.TTC",
+    ];
+
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Heiti SC.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ];
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let candidates: &[&str] = &[
+        // Noto CJK SC (Simplified Chinese) — most precise match
+        "/usr/share/fonts/opentype/noto-cjk-otf/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/noto-cjk-otf/NotoSansCJKsc-Regular.otf",
+        // Catch-all TTC
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttf",
+        // WenQuanYi — common on Debian/Ubuntu
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy-zenhei/wqy-zenhei.ttc",
+        // Arphic / legacy
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+        "/usr/local/share/fonts/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    ];
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let candidates: &[&str] = &[];
+
+    for path in candidates {
+        if let Some(bytes) = try_read_font(std::path::Path::new(path)) {
+            return Some(bytes);
+        }
+    }
+
+    None
+}
+
+fn install_cjk_font(ctx: &egui::Context) {
+    let Some(data) = find_cjk_font() else {
+        return;
+    };
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        CJK_FONT_NAME.to_string(),
+        egui::FontData::from_owned(data).into(),
+    );
+
+    // Put CJK font at the front of the Proportional fallback chain so Chinese
+    // characters in menu titles display correctly.
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, CJK_FONT_NAME.to_string());
+
+    // Also append to Monospace — egui's default Mono font already has ASCII,
+    // we just let it fall through to CJK for non-Latin glyphs.
+    fonts
+        .families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .push(CJK_FONT_NAME.to_string());
+
+    ctx.set_fonts(fonts);
+}
+
+// ---------- App ----------
+
 struct CountdownApp {
     mins_input: String,
     secs_input: String,
     remaining: Duration,
     running: bool,
     last_update: Option<Instant>,
+    fonts_installed: bool,
+    menu_open: bool,
+    menu_pos: egui::Pos2,
+    menu_rect: Option<egui::Rect>,
 }
 
 impl Default for CountdownApp {
@@ -81,6 +192,10 @@ impl Default for CountdownApp {
             remaining: Duration::from_secs(DEFAULT_MINS * 60 + DEFAULT_SECS),
             running: false,
             last_update: None,
+            fonts_installed: false,
+            menu_open: false,
+            menu_pos: egui::pos2(0.0, 0.0),
+            menu_rect: None,
         }
     }
 }
@@ -150,11 +265,39 @@ impl CountdownApp {
             self.set_inputs_from_remaining();
         }
     }
+
+    fn close_menu(&mut self) {
+        self.menu_open = false;
+        self.menu_rect = None;
+    }
+
+    fn maybe_close_menu_by_click(&mut self, ctx: &egui::Context) {
+        if !self.menu_open {
+            return;
+        }
+        let clicked = ctx.input(|i| i.pointer.primary_clicked());
+        let inside_menu = self
+            .menu_rect
+            .map(|r| r.contains(ctx.input(|i| i.pointer.interact_pos().unwrap_or_default())))
+            .unwrap_or(false);
+        if clicked && !inside_menu {
+            self.close_menu();
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.close_menu();
+        }
+    }
 }
 
 impl eframe::App for CountdownApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.fonts_installed {
+            install_cjk_font(ctx);
+            self.fonts_installed = true;
+        }
+
         self.tick();
+        self.maybe_close_menu_by_click(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let big = egui::FontId::monospace(60.0);
@@ -189,22 +332,31 @@ impl eframe::App for CountdownApp {
 
                 ui.add_space(8.0);
 
-                ui.scope(|ui| {
-                    ui.spacing_mut().interact_size.y = 56.0;
-                    ui.menu_button("Menu", |ui| {
-                        let items = load_menu();
-                        if items.is_empty() {
-                            ui.label(format!("no {MENU_FILE}"));
-                            return;
+                let menu_btn = ui
+                    .scope(|ui| {
+                        ui.spacing_mut().interact_size.y = 56.0;
+                        ui.button("Menu")
+                    })
+                    .response;
+                if menu_btn.clicked() {
+                    if self.menu_open {
+                        self.close_menu();
+                    } else {
+                        // Position menu below the button; flip up if near bottom.
+                        let screen = ctx.screen_rect();
+                        let mut pos =
+                            egui::pos2(menu_btn.rect.left(), menu_btn.rect.bottom() + 2.0);
+                        let estimated_h = 180.0;
+                        if pos.y + estimated_h > screen.bottom() {
+                            pos = egui::pos2(
+                                menu_btn.rect.left(),
+                                menu_btn.rect.top() - estimated_h - 2.0,
+                            );
                         }
-                        for item in &items {
-                            if ui.button(&item.title).clicked() {
-                                ui.ctx().copy_text(item.body.clone());
-                                ui.close();
-                            }
-                        }
-                    });
-                });
+                        self.menu_pos = pos;
+                        self.menu_open = true;
+                    }
+                }
             });
 
             if self.remaining.is_zero() && !self.running {
@@ -218,6 +370,49 @@ impl eframe::App for CountdownApp {
                 });
             }
         });
+
+        // Floating menu rendered AFTER the panel so it sits on top, and via
+        // `egui::Window` so the OS is free to draw it outside the main frame.
+        if self.menu_open {
+            let mut close_after = false;
+            let frame = egui::Frame::window(&ctx.style());
+            let resp = egui::Window::new("__countdown_menu")
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .frame(frame)
+                .fixed_pos(self.menu_pos)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    let items = load_menu();
+                    if items.is_empty() {
+                        ui.label(format!("(no {MENU_FILE})"));
+                    } else {
+                        for item in &items {
+                            if ui
+                                .add_sized(
+                                    egui::vec2(160.0, 26.0),
+                                    egui::Button::selectable(false, &item.title).frame(false),
+                                )
+                                .clicked()
+                            {
+                                ctx.copy_text(item.body.clone());
+                                close_after = true;
+                            }
+                        }
+                    }
+                });
+
+            if let Some(inner) = resp {
+                self.menu_rect = Some(inner.response.rect);
+            } else {
+                self.menu_rect = None;
+            }
+
+            if close_after {
+                self.close_menu();
+            }
+        }
 
         ctx.request_repaint_after(Duration::from_millis(100));
     }
