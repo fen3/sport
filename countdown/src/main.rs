@@ -1,10 +1,69 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use eframe::egui;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const DEFAULT_MINS: u64 = 1;
 const DEFAULT_SECS: u64 = 0;
+const MENU_FILE: &str = "menu.txt";
+const MENU_SEPARATOR: &str = "---";
+
+struct MenuItem {
+    title: String,
+    body: String,
+}
+
+fn menu_file_path() -> PathBuf {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        let candidate = dir.join(MENU_FILE);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    PathBuf::from(MENU_FILE)
+}
+
+fn load_menu() -> Vec<MenuItem> {
+    match std::fs::read_to_string(menu_file_path()) {
+        Ok(text) => parse_menu(&text),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn parse_menu(text: &str) -> Vec<MenuItem> {
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.trim() == MENU_SEPARATOR {
+            if !current.is_empty() {
+                blocks.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(line);
+        }
+    }
+    if !current.is_empty() {
+        blocks.push(current);
+    }
+
+    blocks
+        .into_iter()
+        .filter_map(|block| {
+            let title = block.first()?.trim().to_string();
+            if title.is_empty() {
+                return None;
+            }
+            Some(MenuItem {
+                title,
+                body: block[1..].join("\n").trim().to_string(),
+            })
+        })
+        .collect()
+}
 
 struct CountdownApp {
     mins_input: String,
@@ -118,15 +177,34 @@ impl eframe::App for CountdownApp {
                         .desired_width(110.0),
                 );
 
-                ui.add_space(20.0);
+                ui.add_space(16.0);
 
                 let btn_label = if self.running { "Stop" } else { "Start" };
                 if ui
-                    .add(egui::Button::new(btn_label).min_size(egui::vec2(92.0, 56.0)))
+                    .add(egui::Button::new(btn_label).min_size(egui::vec2(88.0, 56.0)))
                     .clicked()
                 {
                     self.toggle_running();
                 }
+
+                ui.add_space(8.0);
+
+                ui.scope(|ui| {
+                    ui.spacing_mut().interact_size.y = 56.0;
+                    ui.menu_button("Menu", |ui| {
+                        let items = load_menu();
+                        if items.is_empty() {
+                            ui.label(format!("no {MENU_FILE}"));
+                            return;
+                        }
+                        for item in &items {
+                            if ui.button(&item.title).clicked() {
+                                ui.ctx().copy_text(item.body.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                });
             });
 
             if self.remaining.is_zero() && !self.running {
@@ -148,7 +226,7 @@ impl eframe::App for CountdownApp {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 160.0])
+            .with_inner_size([540.0, 160.0])
             .with_resizable(false),
         ..Default::default()
     };
@@ -158,4 +236,28 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|_cc| Ok(Box::new(CountdownApp::default()))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_title_and_body() {
+        let items = parse_menu("Hello\nHello, World!\n---\nSig\nBest regards,\nMe\n");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Hello");
+        assert_eq!(items[0].body, "Hello, World!");
+        assert_eq!(items[1].title, "Sig");
+        assert_eq!(items[1].body, "Best regards,\nMe");
+    }
+
+    #[test]
+    fn ignores_separator_fragments_and_blank_blocks() {
+        let items = parse_menu("only title\n---\n---\n  T  \nbody\n");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "only title");
+        assert_eq!(items[0].body, "");
+        assert_eq!(items[1].title, "T");
+    }
 }
