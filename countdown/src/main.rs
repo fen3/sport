@@ -10,7 +10,10 @@ const MENU_FILE: &str = "menu.txt";
 const MENU_SEPARATOR: &str = "---";
 const CJK_FONT_NAME: &str = "cjk";
 const WINDOW_TIMER: [f32; 2] = [540.0, 160.0];
-const WINDOW_LIST: [f32; 2] = [540.0, 400.0];
+const LIST_HEADER: f32 = 70.0;
+const LIST_ROW: f32 = 44.0;
+const LIST_FOOTER: f32 = 20.0;
+const LIST_ROW_H: f32 = 40.0;
 
 struct MenuItem {
     title: String,
@@ -269,9 +272,15 @@ impl CountdownApp {
     fn open_list(&mut self, ctx: &egui::Context) {
         self.menu_items = load_menu();
         self.list_view = true;
+        // Size the window to the content, capped by the available screen.
+        let rows = self.menu_items.len().max(1) as f32;
+        let wanted = LIST_HEADER + rows * LIST_ROW + LIST_FOOTER;
+        let screen_h = ctx.screen_rect().height();
+        let max_h = (screen_h - 80.0).max(240.0);
+        let height = wanted.clamp(240.0, max_h);
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-            WINDOW_LIST[0],
-            WINDOW_LIST[1],
+            WINDOW_TIMER[0],
+            height,
         )));
     }
 
@@ -323,7 +332,7 @@ impl eframe::App for CountdownApp {
                     .show(ui, |ui| {
                         for item in &self.menu_items {
                             let resp = ui.add_sized(
-                                egui::vec2(ui.available_width(), 40.0),
+                                egui::vec2(ui.available_width(), LIST_ROW_H),
                                 egui::Button::new(egui::RichText::new(&item.title).size(18.0)),
                             );
                             if resp.clicked() {
@@ -334,14 +343,14 @@ impl eframe::App for CountdownApp {
             });
         } else {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let big = egui::FontId::monospace(60.0);
+                let big = egui::FontId::monospace(30.0);
                 let sep = egui::RichText::new(":").font(big.clone());
 
                 ui.horizontal_centered(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.mins_input)
                             .font(big.clone())
-                            .desired_width(110.0),
+                            .desired_width(55.0),
                     );
 
                     ui.add_space(2.0);
@@ -351,7 +360,7 @@ impl eframe::App for CountdownApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.secs_input)
                             .font(big.clone())
-                            .desired_width(110.0),
+                            .desired_width(55.0),
                     );
 
                     ui.add_space(16.0);
