@@ -272,8 +272,8 @@ impl CountdownApp {
     fn open_list(&mut self, ctx: &egui::Context) {
         self.menu_items = load_menu();
         self.list_view = true;
-        // Size the window to the content, capped by the available screen.
-        let rows = self.menu_items.len().max(1) as f32;
+        // Size the window to the content (two columns), capped by the screen.
+        let rows = self.menu_items.len().max(1).div_ceil(2) as f32;
         let wanted = LIST_HEADER + rows * LIST_ROW + LIST_FOOTER;
         let screen_h = ctx.screen_rect().height();
         let max_h = (screen_h - 80.0).max(240.0);
@@ -330,15 +330,22 @@ impl eframe::App for CountdownApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for item in &self.menu_items {
-                            let resp = ui.add_sized(
-                                egui::vec2(ui.available_width(), LIST_ROW_H),
-                                egui::Button::new(egui::RichText::new(&item.title).size(18.0)),
-                            );
-                            if resp.clicked() {
-                                copied = Some(item.body.clone());
+                        let items = &self.menu_items;
+                        let split = items.len().div_ceil(2);
+                        ui.columns(2, |cols| {
+                            for (idx, item) in items.iter().enumerate() {
+                                let col = if idx < split { 0 } else { 1 };
+                                let ui = &mut cols[col];
+                                let resp = ui.add_sized(
+                                    egui::vec2(ui.available_width(), LIST_ROW_H),
+                                    egui::Button::new(egui::RichText::new(&item.title).size(18.0))
+                                        .truncate(),
+                                );
+                                if resp.clicked() {
+                                    copied = Some(item.body.clone());
+                                }
                             }
-                        }
+                        });
                     });
             });
         } else {
